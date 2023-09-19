@@ -32,18 +32,22 @@ import (
 var (
 	// clientCertSubstrings list of substrings of at least one of the client certificate names to use during authorization
 	clientCertSubstrings string
+	// clientCertAllowDnsNames include certificate DNS names (SANs) when looking for client certificate name substrings
+	clientCertAllowDnsNames bool
 	// MtlsAuthPlugin implements AuthPlugin interface
 	_ Authenticator = (*MtlsAuthPlugin)(nil)
 )
 
 func registerGRPCServerAuthMTLSFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&clientCertSubstrings, "grpc_auth_mtls_allowed_substrings", clientCertSubstrings, "List of substrings of at least one of the client certificate names (separated by colon).")
+	fs.BoolVar(&clientCertAllowDnsNames, "grpc_auth_mtls_allow_dns_names", clientCertAllowDnsNames, "Include certificate DNS names (SANs) when looking for client certificate name substrings.")
 }
 
 // MtlsAuthPlugin  implements static username/password authentication for grpc. It contains an array of username/passwords
 // that will be authorized to connect to the grpc server.
 type MtlsAuthPlugin struct {
-	clientCertSubstrings []string
+	clientCertSubstrings    []string
+	clientCertAllowDnsNames bool
 }
 
 // Authenticate implements Authenticator interface. This method will be used inside a middleware in grpc_server to authenticate
@@ -59,8 +63,18 @@ func (ma *MtlsAuthPlugin) Authenticate(ctx context.Context, fullMethod string) (
 	}
 	for _, substring := range ma.clientCertSubstrings {
 		for _, cert := range tlsInfo.State.PeerCertificates {
+			// check if the substring is part of the commonName (CN)
 			if strings.Contains(cert.Subject.String(), substring) {
 				return ctx, nil
+			}
+
+			// check if the substring is part of the DNSNames (Subject Alternative Names)
+			if ma.clientCertAllowDnsNames {
+				for _, dnsName := range cert.DNSNames {
+					if strings.Contains(dnsName, substring) {
+						return ctx, nil
+					}
+				}
 			}
 		}
 	}
